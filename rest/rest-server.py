@@ -35,6 +35,9 @@ def log_message(level: str, message: str):
     except Exception as e:
         print(f"Failed to write log to Redis: {e}", flush=True)
 
+@app.route("/", methods=["GET"])
+def hello():
+    return "<h1>Music Separation Server</h1><p>Use a valid endpoint</p>", 200
 
 @app.route("/apiv1/separate", methods=["POST"])
 def separate():

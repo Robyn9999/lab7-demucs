@@ -1,0 +1,11 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip3 install --no-cache-dir --upgrade redis jsonpickle requests flask
+
+COPY rest-server.py /app/rest-server.py
+
+EXPOSE 5000
+
+CMD ["python3", "/app/rest-server.py"]
