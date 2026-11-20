@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import platform
@@ -7,11 +8,11 @@ import redis
 import requests
 from minio import Minio
 
-# Environment variables with localhost defaults for local port-forward testing
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+# Environment variables with cluster defaults
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
-MINIO_HOST = os.getenv("MINIO_HOST", "localhost:9000")
+MINIO_HOST = os.getenv("MINIO_HOST", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "rootuser")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "rootpass123")
 
@@ -32,12 +33,12 @@ minio_client = Minio(
 
 
 def log_debug(message):
-    print("DEBUG:", message, file=sys.stdout)
+    print("DEBUG:", message, file=sys.stdout, flush=True)
     r.lpush("logging", f"{debugKey}:{message}")
 
 
 def log_info(message):
-    print("INFO:", message, file=sys.stdout)
+    print("INFO:", message, file=sys.stdout, flush=True)
     r.lpush("logging", f"{infoKey}:{message}")
 
 
@@ -49,6 +50,7 @@ def ensure_bucket(bucket_name):
 def process_job(job_data):
     songhash = job_data.get("songhash")
     input_bucket = job_data.get("bucket", INPUT_BUCKET)
+    model = job_data.get("model", "htdemucs")
     callback = job_data.get("callback")
 
     if not songhash:
@@ -66,7 +68,7 @@ def process_job(job_data):
     minio_client.fget_object(input_bucket, input_object, local_input_path)
 
     # Run DEMUCS waveform separation
-    cmd = f"python3 -m demucs.separate --mp3 --out {local_output_dir} {local_input_path}"
+    cmd = f"python3 -m demucs.separate -n {model} --mp3 --out {local_output_dir} {local_input_path}"
     log_info(f"Executing: {cmd}")
     exit_code = os.system(cmd)
 
@@ -78,12 +80,11 @@ def process_job(job_data):
     tracks = ["bass", "drums", "vocals", "other"]
     for track in tracks:
         track_filename = f"{track}.mp3"
-        local_track_path = os.path.join(
-            local_output_dir, "mdx_extra_q", songhash, track_filename
-        )
+        matches = glob.glob(os.path.join(local_output_dir, "*", songhash, track_filename))
+        local_track_path = matches[0] if matches else ""
         remote_object_name = f"{songhash}/{track_filename}"
 
-        if os.path.exists(local_track_path):
+        if local_track_path and os.path.exists(local_track_path):
             log_info(f"Uploading {remote_object_name} to bucket '{OUTPUT_BUCKET}'")
             minio_client.fput_object(
                 OUTPUT_BUCKET,
@@ -92,7 +93,7 @@ def process_job(job_data):
                 content_type="audio/mpeg",
             )
         else:
-            log_debug(f"Expected output file missing: {local_track_path}")
+            log_debug(f"Expected output file missing for {songhash}/{track_filename}")
 
     # Trigger optional webhook callback
     if callback and isinstance(callback, dict) and callback.get("url"):
@@ -107,9 +108,8 @@ def process_job(job_data):
     # Clean up /tmp files to prevent pod disk exhaustion
     if os.path.exists(local_input_path):
         os.remove(local_input_path)
-    song_out_dir = os.path.join(local_output_dir, "mdx_extra_q", songhash)
-    if os.path.exists(song_out_dir):
-        shutil.rmtree(song_out_dir)
+    for song_out_dir in glob.glob(os.path.join(local_output_dir, "*", songhash)):
+        shutil.rmtree(song_out_dir, ignore_errors=True)
 
     log_info(f"Completed separation for {songhash}")
 
@@ -118,7 +118,6 @@ def main():
     log_info(f"Worker started. Listening on Redis {REDIS_HOST}:{REDIS_PORT} -> toWorker")
     while True:
         try:
-            # blpop returns a tuple: ('toWorker', '<json_string>')
             _, raw_msg = r.blpop("toWorker")
             log_debug(f"Received task: {raw_msg}")
             job_data = json.loads(raw_msg)

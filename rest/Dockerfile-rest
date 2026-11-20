@@ -1,8 +1,9 @@
+
 FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip3 install --no-cache-dir --upgrade redis jsonpickle requests flask
+RUN pip3 install --no-cache-dir --upgrade redis jsonpickle requests flask minio
 
 COPY rest-server.py /app/rest-server.py
 

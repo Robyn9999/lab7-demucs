@@ -3,16 +3,15 @@ kind: Ingress
 metadata:
   name: rest-ingress
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    kubernetes.io/ingress.class: "gce"
 spec:
-  ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /apiv1
-            pathType: Prefix
+          - path: /*
+            pathType: ImplementationSpecific
             backend:
               service:
-                name: rest-server
+                name: rest-service
                 port:
                   number: 5000
